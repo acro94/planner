@@ -164,6 +164,17 @@ h2.ttl{font-family:'Gowun Batang',serif;font-size:22px;margin:0 0 12px;display:f
 .slide-n{animation:slideN .22s ease-out}.slide-p{animation:slideP .22s ease-out}
 @keyframes slideN{from{transform:translateX(40px);opacity:.3}to{transform:none;opacity:1}}
 @keyframes slideP{from{transform:translateX(-40px);opacity:.3}to{transform:none;opacity:1}}
+.wbody .wi{white-space:normal;word-break:break-all;line-height:1.3;padding:3px 0;font-size:12px}
+.wd{min-height:max(420px,calc(100vh - 330px))}
+.mc{min-height:max(110px,calc((100vh - 300px) / 6))}
+@media (max-width:700px){
+  .focus{grid-template-columns:1fr;gap:10px}
+  .week{grid-template-columns:1fr}
+  .wd{display:grid;grid-template-columns:50px 1fr;gap:8px;min-height:88px;border-right:0;border-bottom:1px solid var(--rule)}
+  .wd:last-child{border-bottom:0}
+  .wd .wh{flex-direction:column;align-items:flex-start;gap:0;border-bottom:0;margin:0;padding:0}
+  .wbody .wi{font-size:13px}
+}
 .gban{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between;background:var(--accentSoft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:12.5px}
 .mc .e{font-size:10.5px;border-radius:3px;padding:0 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sun{color:#c0392b}.sat{color:#2e6da4}
@@ -210,9 +221,6 @@ h2.ttl{font-family:'Gowun Batang',serif;font-size:22px;margin:0 0 12px;display:f
   .rings{display:none}
   .dcols{grid-template-columns:1fr}
   .year{grid-template-columns:repeat(2,1fr)}
-  .week{grid-template-columns:1fr}
-  .wd{border-right:0;border-bottom:1px solid var(--rule);min-height:auto}
-  .focus{grid-template-columns:1fr}
 }
 @media (max-width:600px){
   .wrap{padding:8px}
@@ -225,7 +233,7 @@ h2.ttl{font-family:'Gowun Batang',serif;font-size:22px;margin:0 0 12px;display:f
   .mc .e{font-size:9px;padding:0 2px}
   .mc .e .tm{display:none}
   .mc .e{white-space:normal;word-break:break-all;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;padding:1px 2px}
-  .mc{min-height:72px;padding:2px 1px}
+  .mc{min-height:96px;padding:2px 1px}
   .pages.single .page{padding-left:14px!important;padding-right:10px}
   .mgrid .hd{font-size:10px}
   .mb textarea{font-size:9.5px;padding:3px 1px}
@@ -642,7 +650,7 @@ function vWeekly(){
     const items=[...A.filter(a=>a.allDay).map(a=>`<div class="wi ap" style="color:${a.color||ACOL[0]}">종일 ${esc(a.title)}</div>`),
       ...[...A.filter(a=>!a.allDay)].sort((a,b)=>toMin(a.start)-toMin(b.start)).map(a=>`<div class="wi ap" style="color:${a.color||ACOL[0]}">${esc(a.start)} ${esc(a.title)}</div>`),
       ...[...d.tasks].sort((a,b)=>a.p.localeCompare(b.p)||a.n-b.n).map(x=>`<div class="wi ${x.s==='done'?'done':''}">${x.p}${x.n} ${esc(x.t)}</div>`)].join('');
-    return `<div class="wd ${ds===t?'today':''}"><div class="wh" data-act="goto" data-d="${ds}"><b class="${i==0?'sun':i==6?'sat':''}">${dt.getDate()}</b><span class="muted">${WD[i]}</span></div>${items||'<div class="muted" style="font-size:11px">—</div>'}</div>`}).join('');
+    return `<div class="wd ${ds===t?'today':''}"><div class="wh" data-act="goto" data-d="${ds}"><b class="${i==0?'sun':i==6?'sat':''}">${dt.getDate()}</b><span class="muted">${WD[i]}</span></div><div class="wbody">${items||'<div class="muted" style="font-size:11px">—</div>'}</div></div>`}).join('');
   return `<div class="pages single"><section class="page" style="padding-left:34px">
     <h2 class="ttl">주간 계획 <span class="muted" style="font-size:14px;font-family:'Noto Sans KR'">${sun.replaceAll('-','.')} – ${e.slice(5).replace('-','.')}</span>
       <span class="navbtns" style="margin-left:auto"><button data-act="prev">‹</button><button data-act="today">이번 주</button><button data-act="next">›</button></span></h2>
@@ -652,7 +660,7 @@ function vWeekly(){
         ${(W.focus||[]).map(f=>`<div class="li ${f.done?'done':''}"><input type="checkbox" data-act="focustog" data-id="${f.id}" ${f.done?'checked':''}><input class="bare ink" data-bind="focus" data-id="${f.id}" value="${esc(f.t)}"><button class="x" data-act="focusdel" data-id="${f.id}">×</button></div>`).join('')}
         <div class="addrow" style="margin-top:8px"><input class="inp" id="newfocus" placeholder="이번 주에 꼭 해낼 일 (Enter)"><button class="btn" data-act="focusadd">추가</button></div></div>
       <div><div class="sec">역할별 계획 <small>Roles</small></div>
-        <textarea class="ruled ink" rows="5" data-bind="roles" placeholder="예) 팀장: 분기 보고서 초안 / 부모: 토요일 공원 / 나: 운동 3회">${esc(W.roles||'')}</textarea></div>
+        <textarea class="ruled ink" rows="2" data-bind="roles" placeholder="예) 팀장: 분기 보고서 초안 / 부모: 토요일 공원 / 나: 운동 3회">${esc(W.roles||'')}</textarea></div>
     </div>
     <div class="week">${days}</div>
   </section>${rings(7)}</div>`}
@@ -663,12 +671,12 @@ function vMonthly(){
     if(i>=35&&out&&d.getDay()===0)break;
     const ev=[...allAppts(ds).sort((a,b)=>(a.allDay?0:1)-(b.allDay?0:1)||toMin(a.start)-toMin(b.start)).map(a=>`<div class="e" style="background:${(a.color||ACOL[0])}22;border-left:2px solid ${a.color||ACOL[0]}">${esc(a.title)}${a.allDay?'':`<span class="tm"> ${esc(a.start)}</span>`}</div>`),
       ...dd.tasks.filter(x=>x.p==='A').map(x=>`<div class="e" style="${x.s==='done'?'text-decoration:line-through;opacity:.6':''}">${x.p}${x.n} ${esc(x.t)}</div>`)];
-    cells+=`<div class="mc ${out?'out':''} ${ds===t?'today':''}" data-act="goto" data-d="${ds}"><span class="n ${d.getDay()==0?'sun':d.getDay()==6?'sat':''}">${d.getDate()}</span>${ev.slice(0,4).join('')}${ev.length>4?`<div class="e muted">+${ev.length-4}</div>`:''}</div>`}
+    cells+=`<div class="mc ${out?'out':''} ${ds===t?'today':''}" data-act="goto" data-d="${ds}"><span class="n ${d.getDay()==0?'sun':d.getDay()==6?'sat':''}">${d.getDate()}</span>${ev.slice(0,6).join('')}${ev.length>6?`<div class="e muted">+${ev.length-6}</div>`:''}</div>`}
   return `<div class="pages single"><section class="page" style="padding-left:34px">
     <h2 class="ttl">${y}년 ${m}월 <span class="navbtns" style="margin-left:auto"><button data-act="prev">‹</button><button data-act="today">이번 달</button><button data-act="next">›</button></span></h2>
     ${gBanner()}
     <div class="sec">이달의 목표 <small>Monthly goals</small></div>
-    <textarea class="ruled ink" rows="3" data-bind="mgoal" placeholder="이번 달에 이루고 싶은 것">${esc((S.main.monthGoals||{})[ym]||'')}</textarea>
+    <textarea class="ruled ink" rows="2" data-bind="mgoal" placeholder="이번 달에 이루고 싶은 것">${esc((S.main.monthGoals||{})[ym]||'')}</textarea>
     <div class="mgrid" style="margin-top:14px">${WD.map((w,i)=>`<div class="hd ${i==0?'sun':i==6?'sat':''}">${w}</div>`).join('')}${cells}</div>
   </section>${rings(7)}</div>`}
 

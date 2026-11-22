@@ -308,7 +308,7 @@ const STAT_ORDER=['','done','prog','fwd','dlg','del'];
 /* ---------- state ---------- */
 function defaultMain(){return{
   mandals:[{id:nid(),name:new Date().getFullYear()+' 만다라트',g:Array.from({length:9},()=>Array(9).fill(''))}],
-  curMandal:null,checklists:[],curList:null,master:[],mission:'',values:[],goals:[],weeks:{},monthGoals:{},virtue:{},
+  curMandal:null,checklists:[],curList:null,master:[],mission:'',values:[],goals:[],weeks:{},monthGoals:{},virtue:{},gcalOn:false,gcalShow:{},gcalColor:{},
   theme:'brown',dark:false,hand:false}}
 let S={main:defaultMain(),months:{}};
 const ui={view:'daily',date:TODAY(),ym:TODAY().slice(0,7),year:new Date().getFullYear()};
@@ -317,7 +317,7 @@ function saveLocal(){try{localStorage.setItem('fplanner.v1',JSON.stringify(S))}c
 function monthDoc(ym,create){if(!S.months[ym]){if(!create)return null;S.months[ym]={days:{}}}S.months[ym].days??={};return S.months[ym]}
 function getDay(ds,create){const m=monthDoc(ds.slice(0,7),create);const blank={tasks:[],appts:[],notes:'',posts:[]};if(!m)return blank;if(!m.days[ds]){if(!create)return blank;m.days[ds]=blank}const d=m.days[ds];d.tasks??=[];d.appts??=[];d.posts??=[];d.notes??='';return d}
 const dayKey=ds=>'m-'+ds.slice(0,7);
-function hasContent(ds){const m=S.months[ds.slice(0,7)];const d=m&&m.days&&m.days[ds];return !!(d&&(d.tasks?.length||d.appts?.length||d.notes||d.posts?.length))}
+function hasContent(ds){const m=S.months[ds.slice(0,7)];const d=m&&m.days&&m.days[ds];return !!(d&&(d.tasks?.length||d.appts?.length||d.notes||d.posts?.length))||(typeof gEvents==='function'&&gEvents(ds).length>0)}
 
 /* ---------- sync (Firebase Firestore, offline-first) ---------- */
 const FBV='10.12.2';
@@ -370,7 +370,7 @@ function renderAcct(){const b=$('#acct');if(!CFG){b.textContent='⚙ 동기화 �
     const app=A.initializeApp(CFG);
     fdb=F.initializeFirestore(app,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})});
     auth=Au.getAuth(app);
-    Au.getRedirectResult(auth).catch(()=>{});
+    Au.getRedirectResult(auth).then(r=>{let w=null;try{w=sessionStorage.getItem('fplanner.gwant');sessionStorage.removeItem('fplanner.gwant')}catch(e){}if(r&&w)gFromResult(r)}).catch(()=>{});
     Au.onAuthStateChanged(auth,u=>{
       if(unsub){unsub();unsub=null}
       user=u;renderAcct();
@@ -393,8 +393,103 @@ function acctModal(){
 const AERR={'auth/invalid-credential':'이메일 또는 비밀번호가 맞지 않아요','auth/wrong-password':'비밀번호가 맞지 않아요','auth/user-not-found':'가입되지 않은 이메일이에요','auth/email-already-in-use':'이미 가입된 이메일이에요. 로그인을 눌러주세요','auth/weak-password':'비밀번호는 6자 이상이어야 해요','auth/invalid-email':'이메일 형식을 확인해 주세요','auth/network-request-failed':'인터넷 연결을 확인해 주세요','auth/unauthorized-domain':'이 주소가 Firebase 승인된 도메인에 없어요 (안내서 확인)','auth/operation-not-allowed':'Firebase에서 이 로그인 방식이 켜져 있지 않아요 (안내서 확인)'};
 function aerr(e){const el=$('#aerr');if(el)el.textContent=AERR[e&&e.code]||('로그인 실패: '+(e&&e.code||e))}
 
+/* ---------- Google Calendar (read-only) ---------- */
+const GSCOPE='https://www.googleapis.com/auth/calendar.readonly';
+const GAPI='https://www.googleapis.com/calendar/v3';
+let gTok=null;try{const t=JSON.parse(localStorage.getItem('fplanner.gtok')||'null');if(t&&t.exp>Date.now())gTok=t}catch(e){}
+let G={cals:[],events:{},fetched:{},lastSync:0};
+try{const g=JSON.parse(localStorage.getItem('fplanner.gcal')||'null');if(g)G={...G,...g}}catch(e){}
+function saveG(){try{localStorage.setItem('fplanner.gcal',JSON.stringify(G))}catch(e){}}
+let gState='',gBusy=false,gErrAt=0;
+const gConnected=()=>!!(gTok&&gTok.exp>Date.now());
+function gIsShown(c){const v=(S.main.gcalShow||{})[c.id];return v===undefined?c.selected!==false:!!v}
+function calColor(c){return (S.main.gcalColor||{})[c.id]||c.backgroundColor||'#2e6da4'}
+function gEvents(ds){const out=[];for(const e of (G.events[ds]||[])){const c=G.cals.find(x=>x.id===e.cal);if(c&&gIsShown(c))out.push({...e,color:calColor(c),g:true,calName:c.summary})}return out}
+function allAppts(ds){return [...getDay(ds).appts,...gEvents(ds)]}
+function gSaveTok(tok){gTok={t:tok,exp:Date.now()+55*60e3};try{localStorage.setItem('fplanner.gtok',JSON.stringify(gTok))}catch(e){}}
+function gFromResult(r){const c=r&&FB.GoogleAuthProvider.credentialFromResult(r);if(!c||!c.accessToken)return false;gSaveTok(c.accessToken);if(!S.main.gcalOn){S.main.gcalOn=true;touch('main')}G.fetched={};gState='';gRefresh();return true}
+async function gConnect(){
+  if(!user||!FB){toast('먼저 로그인해 주세요');return}
+  const p=new FB.GoogleAuthProvider();p.addScope(GSCOPE);if(user.email)p.setCustomParameters({login_hint:user.email});
+  const hasG=user.providerData.some(x=>x.providerId==='google.com');
+  try{const r=hasG?await FB.reauthenticateWithPopup(user,p):await FB.linkWithPopup(user,p);gFromResult(r);toast('Google 캘린더를 연결했어요')}
+  catch(e){const c=e&&e.code;
+    if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment','auth/cancelled-popup-request'].includes(c)){try{sessionStorage.setItem('fplanner.gwant','1')}catch(x){}hasG?FB.reauthenticateWithRedirect(user,p):FB.linkWithRedirect(user,p)}
+    else if(c==='auth/user-mismatch')toast('플래너에 로그인한 것과 같은 Google 계정을 골라 주세요');
+    else if(c==='auth/credential-already-in-use')toast('이 Google 계정은 다른 플래너 계정에 연결돼 있어요');
+    else if(c!=='auth/popup-closed-by-user'){gState='error:'+(c||e.message);render()}}
+}
+async function gget(path){
+  const r=await fetch(GAPI+path,{headers:{Authorization:'Bearer '+gTok.t}});
+  if(r.status===401){gTok=null;try{localStorage.removeItem('fplanner.gtok')}catch(e){}throw{code:401}}
+  if(!r.ok){let m='';try{m=(await r.json()).error.message}catch(e){}throw{code:r.status,msg:m}}
+  return r.json()}
+function monthsFor(){const v=ui.view;let base=v==='monthly'?ui.ym:ui.date.slice(0,7);
+  if(v==='yearly')return Array.from({length:12},(_,i)=>`${ui.year}-${pad(i+1)}`);
+  if(v==='gcal')return [TODAY().slice(0,7),addMonths(TODAY().slice(0,7),1),addMonths(TODAY().slice(0,7),2)];
+  return [addMonths(base,-1),base,addMonths(base,1)]}
+function hm(d){return pad(d.getHours())+':'+pad(d.getMinutes())}
+function gAdd(store,cal,ev){
+  if(ev.status==='cancelled'||!ev.start)return;
+  const base={id:ev.id,cal,title:ev.summary||'(제목 없음)',loc:ev.location||'',link:ev.htmlLink||''};
+  const push=(d,o)=>{(store[d]??=[]).push(o)};
+  if(ev.start.date){let d=ev.start.date;const end=ev.end&&ev.end.date||addDays(d,1);while(d<end){push(d,{...base,allDay:true,start:'',end:''});d=addDays(d,1)}return}
+  const s=new Date(ev.start.dateTime),e=new Date(ev.end.dateTime);const sd=ymd(s),ed=ymd(new Date(e-1));
+  const eh=hm(e)==='00:00'?'24:00':hm(e);
+  if(sd===ed){push(sd,{...base,allDay:false,start:hm(s),end:eh});return}
+  push(sd,{...base,allDay:false,start:hm(s),end:'24:00'});
+  let d=addDays(sd,1);while(d<ed){push(d,{...base,allDay:true,start:'',end:'',title:base.title+' (계속)'});d=addDays(d,1)}
+  push(ed,{...base,allDay:false,start:'00:00',end:eh});
+}
+async function gRefresh(force){
+  if(gBusy||!gConnected()||!navigator.onLine)return;
+  const want=monthsFor().sort();const need=force?want:want.filter(m=>!(G.fetched[m]>Date.now()-15*60e3));
+  if(!need.length&&G.cals.length)return;
+  gBusy=true;gState='loading';
+  try{
+    const L=await gget('/users/me/calendarList?maxResults=250');
+    G.cals=(L.items||[]).map(c=>({id:c.id,summary:c.summaryOverride||c.summary||c.id,backgroundColor:c.backgroundColor,selected:c.selected!==false,primary:!!c.primary}));
+    if(need.length){
+      const lo=need[0],hi=need[need.length-1];const[ly,lm]=lo.split('-').map(Number),[hy,hmo]=hi.split('-').map(Number);
+      const tMin=new Date(ly,lm-1,1).toISOString(),tMax=new Date(hy,hmo,1).toISOString();
+      const store={};
+      for(const c of G.cals){let pt='';do{
+        const q=`/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&maxResults=2500&timeMin=${encodeURIComponent(tMin)}&timeMax=${encodeURIComponent(tMax)}${pt?'&pageToken='+encodeURIComponent(pt):''}`;
+        const R=await gget(q);(R.items||[]).forEach(ev=>gAdd(store,c.id,ev));pt=R.nextPageToken||''}while(pt)}
+      let d=lo+'-01';const stop=addMonths(hi,1)+'-01';while(d<stop){if(store[d])G.events[d]=store[d];else delete G.events[d];d=addDays(d,1)}
+      need.concat(want).forEach(m=>G.fetched[m]=Date.now());
+    }
+    G.lastSync=Date.now();gState='';saveG();
+  }catch(e){gState=e.code===401?'':'error:'+(e.msg||e.code);gErrAt=Date.now();console.error(e)}
+  gBusy=false;safeRender();
+}
+function gAuto(){if(gConnected()&&!gBusy&&(!gState.startsWith('error')||Date.now()-gErrAt>5*60e3))gRefresh()}
+setInterval(gAuto,5*60e3);window.addEventListener('online',()=>setTimeout(gAuto,2000));
+function gErrText(s){const m=s.slice(6);if(/has not been used|disabled|accessNotConfigured/i.test(m))return 'Google Calendar API가 꺼져 있어요. 안내서 7단계 1번을 확인해 주세요.';if(/insufficient|scope/i.test(m))return '캘린더 읽기 권한이 허용되지 않았어요. 다시 연결하면서 캘린더 권한에 체크해 주세요.';return '불러오기 실패: '+m}
+function vGcal(){
+  const conn=gConnected(),t=TODAY();
+  let status;
+  if(!CFG||!user)status=`<p>먼저 위쪽 <b>🔑 로그인</b> 버튼으로 플래너에 로그인해 주세요.</p>`;
+  else if(!conn)status=`<p style="font-size:13px">${S.main.gcalOn?'보안을 위해 연결이 일정 시간 뒤 풀려요. 버튼을 눌러 다시 연결하면 새 일정을 불러와요. 그동안에는 마지막으로 불러온 일정이 보여요.':'Google 캘린더의 일정을 읽어 와서 일일·주간·월간 화면에 함께 보여줘요. 플래너에서 Google 캘린더를 바꾸지는 않아요.'}</p><button class="btn pri" style="padding:9px 14px" data-act="gconnect">${S.main.gcalOn?'Google 캘린더 다시 연결':'Google 캘린더 연결하기'}</button>`;
+  else status=`<p style="font-size:13px">연결됨 · ${G.lastSync?'마지막 동기화 '+new Date(G.lastSync).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'불러오는 중…'}${gState==='loading'?' · 불러오는 중…':''}</p><div style="display:flex;gap:6px"><button class="btn" data-act="grefresh">모두 새로고침</button><button class="btn" data-act="gdisc">연결 해제</button></div>`;
+  const err=gState.startsWith('error')?`<p style="color:#c0392b;font-size:12px;margin-top:8px">${esc(gErrText(gState))}</p>`:'';
+  const cals=G.cals.length?G.cals.map(c=>`<div class="li"><input type="color" value="${esc(calColor(c))}" data-bind="gcolor" data-id="${esc(c.id)}" style="width:26px;height:22px;border:0;padding:0;background:none;flex:none"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.summary)}${c.primary?' <span class="muted" style="font-size:11px">(기본)</span>':''}</span><label style="font-size:12px;display:flex;align-items:center;gap:4px;flex:none"><input type="checkbox" data-act="gshow" data-id="${esc(c.id)}" ${gIsShown(c)?'checked':''}> 표시</label></div>`).join(''):'<p class="muted" style="font-size:12px">연결하면 캘린더 목록이 여기에 나와요.</p>';
+  let up='';for(let i=0;i<60;i++){const ds=addDays(t,i);const ev=gEvents(ds).sort((a,b)=>(a.allDay?0:1)-(b.allDay?0:1)||toMin(a.start)-toMin(b.start));if(!ev.length)continue;const d=parse(ds);
+    up+=`<div style="display:grid;grid-template-columns:72px 1fr;gap:8px;border-bottom:1px solid var(--rule);padding:6px 0"><div data-act="goto" data-d="${ds}" style="cursor:pointer"><b class="serif">${d.getMonth()+1}/${d.getDate()}</b> <span class="muted" style="font-size:11px">(${WD[d.getDay()]})</span><div class="muted" style="font-size:10px">${i===0?'오늘':i+'일 뒤'}</div></div><div>${ev.map(e=>`<div class="allday" data-act="gevt" data-d="${ds}" data-id="${esc(e.id)}" style="border-color:${e.color};background:${e.color}1f">${e.allDay?'종일':esc(e.start)+'–'+esc(e.end)} · ${esc(e.title)}</div>`).join('')}</div></div>`}
+  return `<div class="pages"><section class="page">
+  <h2 class="ttl">캘린더 연결 · Google</h2>
+  <div class="virtue" style="margin-top:0">${status}${err}</div>
+  <div class="sec" style="margin-top:16px">연결된 캘린더 <small>Calendars</small></div>${cals}
+  <p class="muted" style="font-size:12px;margin-top:10px">색상을 누르면 플래너에서 보일 색을 바꿀 수 있어요. 표시를 끄면 그 캘린더 일정은 숨겨져요. 이 설정은 다른 기기에도 똑같이 적용돼요.</p>
+  </section><section class="page"><div class="sec">다가오는 일정 · 60일 <small>Upcoming</small></div>${up||'<p class="muted" style="font-size:12px">표시할 일정이 없어요.</p>'}</section>${rings(6)}</div>`}
+function gEvtModal(ds,id){const e=gEvents(ds).find(x=>x.id===id);if(!e)return;
+  $('#modalRoot').innerHTML=`<div class="modal" data-act="mbg"><div class="box"><h3>${esc(e.title)}</h3>
+  <p style="font-size:13px;line-height:1.7">${ds.replaceAll('-','.')} (${WD[parse(ds).getDay()]}) · ${e.allDay?'종일':esc(e.start)+'–'+esc(e.end)}<br><span style="color:${e.color}">●</span> ${esc(e.calName)}${e.loc?'<br>📍 '+esc(e.loc):''}</p>
+  <p class="muted" style="font-size:12px">Google 캘린더에서 불러온 일정이라 여기서는 고칠 수 없어요.</p>
+  <div class="acts">${e.link?`<a class="btn" href="${esc(e.link)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">Google 캘린더에서 열기</a>`:''}<button class="btn pri" data-act="close">닫기</button></div></div></div>`}
+
 /* ---------- chrome ---------- */
-const VIEWS=[['daily','일일'],['weekly','주간'],['monthly','월간'],['yearly','연간'],['mandal','만다라트'],['check','체크리스트'],['master','마스터 목록'],['values','가치·목표']];
+const VIEWS=[['daily','일일'],['weekly','주간'],['monthly','월간'],['yearly','연간'],['mandal','만다라트'],['check','체크리스트'],['master','마스터 목록'],['values','가치·목표'],['gcal','캘린더 연결']];
 function applyPrefs(){const m=S.main;document.body.className=['t-'+(m.theme||'brown'),m.dark?'dark':'',m.hand?'hand':''].join(' ');
   $('#dots').innerHTML=THEMES.map(([k,c])=>`<button data-act="theme" data-t="${k}" style="background:${c}" class="${(m.theme||'brown')===k?'on':''}" aria-label="${k}"></button>`).join('');
   $('#handBtn').classList.toggle('on',!!m.hand);$('#darkBtn').classList.toggle('on',!!m.dark)}
@@ -431,10 +526,10 @@ function vDaily(){
   const q=QUOTES[(doy+y)%QUOTES.length];
   const tasks=[...day.tasks].sort((a,b)=>a.p.localeCompare(b.p)||a.n-b.n);
   const START=6,END=24,H=24;
-  const ap=layoutAppts(day.appts);
+  const AP=allAppts(ds);const ap=layoutAppts(AP);
   let slots='';for(let h=START;h<END;h++){slots+=`<div class="slot" data-act="apptnew" data-t="${pad(h)}:00"><span class="h">${h}</span></div><div class="slot half" data-act="apptnew" data-t="${pad(h)}:30"><span class="h">:30</span></div>`}
   const apHtml=ap.map(x=>{const top=(x.s-START*60)/30*H,ht=Math.max((x.e-x.s)/30*H-2,20);const c=x.color||ACOL[0];
-    return `<div class="appt" data-act="apptedit" data-id="${x.id}" style="top:${top}px;height:${ht}px;left:calc(40px + (100% - 40px)*${x.ci}/${x.n});width:calc((100% - 40px)/${x.n} - 3px);background:${c}22;border-color:${c}"><b>${esc(x.start)}–${esc(x.end)}</b><span class="ink">${esc(x.title)}</span></div>`}).join('');
+    return `<div class="appt" data-act="${x.g?'gevt':'apptedit'}" data-d="${ds}" data-id="${esc(x.id)}" title="${x.g?esc(x.calName):''}" style="top:${top}px;height:${ht}px;left:calc(40px + (100% - 40px)*${x.ci}/${x.n});width:calc((100% - 40px)/${x.n} - 3px);background:${c}22;border-color:${c}"><b>${esc(x.start)}–${esc(x.end)}</b><span class="ink">${esc(x.title)}</span></div>`}).join('');
   const wk=weekOfYear(ds),vi=wk%13,v=VIRTUES[vi];const vKey=sundayOf(ds);const vrec=(S.main.virtue||{})[vKey]||{};
   const sun=vKey;
   const vchk=WD.map((w,i)=>{const dd=addDays(sun,i);return `<button data-act="vtog" data-d="${dd}" class="${vrec[dd]?'on':''} ${dd===ds?'today':''}" title="${dd}">${w}</button>`}).join('');
@@ -460,7 +555,7 @@ function vDaily(){
       </div>
       <div>
         <div class="sec">약속 및 일정 <small>Appointments</small><button class="btn r" data-act="apptnew" data-t="09:00">+ 일정</button></div>
-        ${day.appts.filter(a=>a.allDay).map(a=>`<div class="allday" data-act="apptedit" data-id="${a.id}" style="border-color:${a.color||ACOL[0]}">종일 · <span class="ink">${esc(a.title)}</span></div>`).join('')}
+        ${(S.main.gcalOn&&user&&!gConnected())?'<div class="muted" style="font-size:11px;margin-bottom:6px">Google 캘린더 연결이 풀렸어요 · <a href="#" data-act="gconnect" style="color:var(--accent)">다시 연결</a></div>':''}${AP.filter(a=>a.allDay).map(a=>`<div class="allday" data-act="${a.g?'gevt':'apptedit'}" data-d="${ds}" data-id="${esc(a.id)}" style="border-color:${a.color||ACOL[0]}">종일 · <span class="ink">${esc(a.title)}</span></div>`).join('')}
         <div class="grid">${slots}${apHtml}</div>
       </div>
     </div>
@@ -478,9 +573,9 @@ function vDaily(){
 function vWeekly(){
   const sun=sundayOf(ui.date),t=TODAY();const W=(S.main.weeks||{})[sun]||{focus:[],roles:''};
   const e=addDays(sun,6);
-  const days=Array.from({length:7},(_,i)=>{const ds=addDays(sun,i),d=getDay(ds),dt=parse(ds);
-    const items=[...d.appts.filter(a=>a.allDay).map(a=>`<div class="wi ap">종일 ${esc(a.title)}</div>`),
-      ...[...d.appts.filter(a=>!a.allDay)].sort((a,b)=>toMin(a.start)-toMin(b.start)).map(a=>`<div class="wi ap">${esc(a.start)} ${esc(a.title)}</div>`),
+  const days=Array.from({length:7},(_,i)=>{const ds=addDays(sun,i),d=getDay(ds),dt=parse(ds),A=allAppts(ds);
+    const items=[...A.filter(a=>a.allDay).map(a=>`<div class="wi ap" style="color:${a.color||ACOL[0]}">종일 ${esc(a.title)}</div>`),
+      ...[...A.filter(a=>!a.allDay)].sort((a,b)=>toMin(a.start)-toMin(b.start)).map(a=>`<div class="wi ap" style="color:${a.color||ACOL[0]}">${esc(a.start)} ${esc(a.title)}</div>`),
       ...[...d.tasks].sort((a,b)=>a.p.localeCompare(b.p)||a.n-b.n).map(x=>`<div class="wi ${x.s==='done'?'done':''}">${x.p}${x.n} ${esc(x.t)}</div>`)].join('');
     return `<div class="wd ${ds===t?'today':''}"><div class="wh" data-act="goto" data-d="${ds}"><b class="${i==0?'sun':i==6?'sat':''}">${dt.getDate()}</b><span class="muted">${WD[i]}</span></div>${items||'<div class="muted" style="font-size:11px">—</div>'}</div>`}).join('');
   return `<div class="pages single"><section class="page" style="padding-left:34px">
@@ -500,7 +595,7 @@ function vMonthly(){
   const ym=ui.ym,[y,m]=ym.split('-').map(Number),first=new Date(y,m-1,1),start=new Date(y,m-1,1-first.getDay()),t=TODAY();
   let cells='';for(let i=0;i<42;i++){const d=new Date(start);d.setDate(start.getDate()+i);const ds=ymd(d);const dd=getDay(ds);const out=d.getMonth()!==m-1;
     if(i>=35&&out&&d.getDay()===0)break;
-    const ev=[...dd.appts.map(a=>`<div class="e" style="background:${(a.color||ACOL[0])}22;border-left:2px solid ${a.color||ACOL[0]}">${a.allDay?'':esc(a.start)+' '}${esc(a.title)}</div>`),
+    const ev=[...allAppts(ds).sort((a,b)=>(a.allDay?0:1)-(b.allDay?0:1)||toMin(a.start)-toMin(b.start)).map(a=>`<div class="e" style="background:${(a.color||ACOL[0])}22;border-left:2px solid ${a.color||ACOL[0]}">${a.allDay?'':esc(a.start)+' '}${esc(a.title)}</div>`),
       ...dd.tasks.filter(x=>x.p==='A').map(x=>`<div class="e" style="${x.s==='done'?'text-decoration:line-through;opacity:.6':''}">${x.p}${x.n} ${esc(x.t)}</div>`)];
     cells+=`<div class="mc ${out?'out':''} ${ds===t?'today':''}" data-act="goto" data-d="${ds}"><span class="n ${d.getDay()==0?'sun':d.getDay()==6?'sat':''}">${d.getDate()}</span>${ev.slice(0,4).join('')}${ev.length>4?`<div class="e muted">+${ev.length-4}</div>`:''}</div>`}
   return `<div class="pages single"><section class="page" style="padding-left:34px">
@@ -574,8 +669,8 @@ function vValues(){const m=S.main;
   <p class="muted" style="font-size:12px">장기(3년 이상) → 중기(1년) → 단기(분기·월) 순서로 쪼개고, 단기 목표는 주간의 큰 돌로 옮기세요.</p>
   </section>${rings(6)}</div>`}
 
-const VFN={daily:vDaily,weekly:vWeekly,monthly:vMonthly,yearly:vYearly,mandal:vMandal,check:vCheck,master:vMaster,values:vValues};
-function render(){renderChrome();const html=VFN[ui.view]();const tmp=document.createElement('div');tmp.innerHTML=html;const el=tmp.firstElementChild;el.id='pages';$('#pages').replaceWith(el)}
+const VFN={daily:vDaily,weekly:vWeekly,monthly:vMonthly,yearly:vYearly,mandal:vMandal,check:vCheck,master:vMaster,values:vValues,gcal:vGcal};
+function render(){renderChrome();const html=VFN[ui.view]();const tmp=document.createElement('div');tmp.innerHTML=html;const el=tmp.firstElementChild;el.id='pages';$('#pages').replaceWith(el);setTimeout(gAuto,0)}
 
 /* ---------- modal ---------- */
 function closeModal(){$('#modalRoot').innerHTML=''}
@@ -665,10 +760,15 @@ const ACT={
   import:()=>textModal('가져오기 — 백업한 내용을 붙여넣으세요','',false),
   copy:async()=>{try{await navigator.clipboard.writeText($('#mt').value);toast('복사했어요')}catch(e){$('#mt').select();toast('선택된 내용을 직접 복사해 주세요')}},
   acct:acctModal,
+  gconnect:(el,e)=>{e&&e.preventDefault();gConnect()},
+  grefresh:()=>{G.fetched={};gRefresh(true);render()},
+  gdisc:()=>{gTok=null;G={cals:[],events:{},fetched:{},lastSync:0};try{localStorage.removeItem('fplanner.gtok');localStorage.removeItem('fplanner.gcal')}catch(e){}S.main.gcalOn=false;touch('main');render();toast('연결을 해제했어요')},
+  gshow:el=>{S.main.gcalShow??={};S.main.gcalShow[el.dataset.id]=el.checked;touch('main');render()},
+  gevt:el=>gEvtModal(el.dataset.d,el.dataset.id),
   google:async()=>{const p=new FB.GoogleAuthProvider();try{await FB.signInWithPopup(auth,p);closeModal()}catch(e){if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment','auth/cancelled-popup-request'].includes(e.code)){FB.signInWithRedirect(auth,p)}else if(e.code!=='auth/popup-closed-by-user')aerr(e)}},
   signin:async()=>{try{await FB.signInWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);closeModal()}catch(e){aerr(e)}},
   signup:async()=>{try{await FB.createUserWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);closeModal();toast('가입했어요')}catch(e){aerr(e)}},
-  logout:async()=>{try{await FB.signOut(auth)}catch(e){}S={main:defaultMain(),months:{}};last={};try{localStorage.removeItem('fplanner.v1')}catch(e){}closeModal();applyPrefs();render();
+  logout:async()=>{try{await FB.signOut(auth)}catch(e){}gTok=null;G={cals:[],events:{},fetched:{},lastSync:0};try{localStorage.removeItem('fplanner.gtok');localStorage.removeItem('fplanner.gcal')}catch(e){}S={main:defaultMain(),months:{}};last={};try{localStorage.removeItem('fplanner.v1')}catch(e){}closeModal();applyPrefs();render();
 if('serviceWorker' in navigator&&location.protocol!=='file:'){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn(e)))}toast('로그아웃했어요')},
   savefile:()=>{const blob=new Blob([JSON.stringify(S)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='franklin-planner-backup-'+TODAY()+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500)},
   doimport:()=>{try{const o=JSON.parse($('#mt').value);if(!o.main)throw 0;S={main:{...defaultMain(),...o.main},months:o.months||{}};saveLocal();last={};if(user)pushAll();closeModal();applyPrefs();render();
@@ -705,9 +805,10 @@ const BIND={
   valdesc:el=>{const v=findIn(S.main.values,el.dataset.id);if(v){v.desc=el.value;touch('main')}},
   goalt:el=>{const g=findIn(S.main.goals,el.dataset.id);if(g){g.t=el.value;touch('main')}},
   goaldue:el=>{const g=findIn(S.main.goals,el.dataset.id);if(g){g.due=el.value;touch('main')}},
+  gcolor:el=>{S.main.gcalColor??={};S.main.gcalColor[el.dataset.id]=el.value;touch('main');render()},
   goalcat:el=>{const g=findIn(S.main.goals,el.dataset.id);if(g){g.cat=el.value;touch('main');render()}}
 };
-const RENDER_ON_CHANGE=new Set(['jump','msel','cltpl','goalcat']);
+const RENDER_ON_CHANGE=new Set(['jump','msel','cltpl','goalcat','gcolor']);
 document.addEventListener('input',e=>{const b=e.target.dataset&&e.target.dataset.bind;if(b&&BIND[b]&&!RENDER_ON_CHANGE.has(b))BIND[b](e.target)});
 document.addEventListener('change',e=>{const b=e.target.dataset&&e.target.dataset.bind;if(b&&BIND[b]&&RENDER_ON_CHANGE.has(b))BIND[b](e.target)});
 

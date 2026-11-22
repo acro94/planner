@@ -161,6 +161,7 @@ h2.ttl{font-family:'Gowun Batang',serif;font-size:22px;margin:0 0 12px;display:f
 .mc .n{font-family:'Gowun Batang',serif;font-weight:700;font-size:14px}
 .mc.today .n{background:var(--ink);color:var(--paper);border-radius:50%;display:inline-grid;place-items:center;width:22px;height:22px}
 .mc .e .tm{opacity:.65;font-size:.9em}
+.gban{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between;background:var(--accentSoft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:12.5px}
 .mc .e{font-size:10.5px;border-radius:3px;padding:0 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sun{color:#c0392b}.sat{color:#2e6da4}
 /* yearly */
@@ -411,6 +412,7 @@ const gConnected=()=>!!(gTok&&gTok.exp>Date.now());
 function gIsShown(c){const v=(S.main.gcalShow||{})[c.id];return v===undefined?c.selected!==false:!!v}
 function calColor(c){return (S.main.gcalColor||{})[c.id]||c.backgroundColor||'#2e6da4'}
 function gEvents(ds){const out=[];for(const e of (G.events[ds]||[])){const c=G.cals.find(x=>x.id===e.cal);if(c&&gIsShown(c))out.push({...e,color:calColor(c),g:true,calName:c.summary})}return out}
+function gBanner(){if(!(S.main.gcalOn&&user&&!gConnected()))return '';return `<div class="gban"><span>Google 캘린더 연결이 풀려서 새 일정을 못 불러오고 있어요</span><button class="btn pri" data-act="gconnect">캘린더 새로 불러오기</button></div>`}
 function allAppts(ds){return [...getDay(ds).appts,...gEvents(ds)]}
 function gSaveTok(tok){gTok={t:tok,exp:Date.now()+55*60e3};try{localStorage.setItem('fplanner.gtok',JSON.stringify(gTok))}catch(e){}}
 function gFromResult(r){const c=r&&FB.GoogleAuthProvider.credentialFromResult(r);if(!c||!c.accessToken)return false;gSaveTok(c.accessToken);if(!S.main.gcalOn){S.main.gcalOn=true;touch('main')}G.fetched={};gState='';gRefresh();return true}
@@ -541,6 +543,7 @@ function vDaily(){
   const vchk=WD.map((w,i)=>{const dd=addDays(sun,i);return `<button data-act="vtog" data-d="${dd}" class="${vrec[dd]?'on':''} ${dd===ds?'today':''}" title="${dd}">${w}</button>`}).join('');
   return `<div class="pages">
   <section class="page">
+    ${gBanner()}
     <div class="dhead">
       <div class="bignum">${d.getDate()}</div>
       <div><div class="wdn">${y}년 ${d.getMonth()+1}월 · ${WD[d.getDay()]}요일</div><div class="sub">올해의 ${doy}번째 날 · ${left}일 남음</div></div>
@@ -561,7 +564,7 @@ function vDaily(){
       </div>
       <div>
         <div class="sec">약속 및 일정 <small>Appointments</small><button class="btn r" data-act="apptnew" data-t="09:00">+ 일정</button></div>
-        ${(S.main.gcalOn&&user&&!gConnected())?'<div class="muted" style="font-size:11px;margin-bottom:6px">Google 캘린더 연결이 풀렸어요 · <a href="#" data-act="gconnect" style="color:var(--accent)">다시 연결</a></div>':''}${AP.filter(a=>a.allDay).map(a=>`<div class="allday" data-act="${a.g?'gevt':'apptedit'}" data-d="${ds}" data-id="${esc(a.id)}" style="border-color:${a.color||ACOL[0]}">종일 · <span class="ink">${esc(a.title)}</span></div>`).join('')}
+        ${AP.filter(a=>a.allDay).map(a=>`<div class="allday" data-act="${a.g?'gevt':'apptedit'}" data-d="${ds}" data-id="${esc(a.id)}" style="border-color:${a.color||ACOL[0]}">종일 · <span class="ink">${esc(a.title)}</span></div>`).join('')}
         <div class="grid">${slots}${apHtml}</div>
       </div>
     </div>
@@ -587,6 +590,7 @@ function vWeekly(){
   return `<div class="pages single"><section class="page" style="padding-left:34px">
     <h2 class="ttl">주간 계획 <span class="muted" style="font-size:14px;font-family:'Noto Sans KR'">${sun.replaceAll('-','.')} – ${e.slice(5).replace('-','.')}</span>
       <span class="navbtns" style="margin-left:auto"><button data-act="prev">‹</button><button data-act="today">이번 주</button><button data-act="next">›</button></span></h2>
+    ${gBanner()}
     <div class="focus">
       <div><div class="sec">이번 주 큰 돌 <small>Weekly goals</small></div>
         ${(W.focus||[]).map(f=>`<div class="li ${f.done?'done':''}"><input type="checkbox" data-act="focustog" data-id="${f.id}" ${f.done?'checked':''}><input class="bare ink" data-bind="focus" data-id="${f.id}" value="${esc(f.t)}"><button class="x" data-act="focusdel" data-id="${f.id}">×</button></div>`).join('')}
@@ -606,6 +610,7 @@ function vMonthly(){
     cells+=`<div class="mc ${out?'out':''} ${ds===t?'today':''}" data-act="goto" data-d="${ds}"><span class="n ${d.getDay()==0?'sun':d.getDay()==6?'sat':''}">${d.getDate()}</span>${ev.slice(0,4).join('')}${ev.length>4?`<div class="e muted">+${ev.length-4}</div>`:''}</div>`}
   return `<div class="pages single"><section class="page" style="padding-left:34px">
     <h2 class="ttl">${y}년 ${m}월 <span class="navbtns" style="margin-left:auto"><button data-act="prev">‹</button><button data-act="today">이번 달</button><button data-act="next">›</button></span></h2>
+    ${gBanner()}
     <div class="sec">이달의 목표 <small>Monthly goals</small></div>
     <textarea class="ruled ink" rows="3" data-bind="mgoal" placeholder="이번 달에 이루고 싶은 것">${esc((S.main.monthGoals||{})[ym]||'')}</textarea>
     <div class="mgrid" style="margin-top:14px">${WD.map((w,i)=>`<div class="hd ${i==0?'sun':i==6?'sat':''}">${w}</div>`).join('')}${cells}</div>

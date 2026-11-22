@@ -161,6 +161,9 @@ h2.ttl{font-family:'Gowun Batang',serif;font-size:22px;margin:0 0 12px;display:f
 .mc .n{font-family:'Gowun Batang',serif;font-weight:700;font-size:14px}
 .mc.today .n{background:var(--ink);color:var(--paper);border-radius:50%;display:inline-grid;place-items:center;width:22px;height:22px}
 .mc .e .tm{opacity:.65;font-size:.9em}
+.slide-n{animation:slideN .22s ease-out}.slide-p{animation:slideP .22s ease-out}
+@keyframes slideN{from{transform:translateX(40px);opacity:.3}to{transform:none;opacity:1}}
+@keyframes slideP{from{transform:translateX(-40px);opacity:.3}to{transform:none;opacity:1}}
 .gban{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between;background:var(--accentSoft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:12.5px}
 .mc .e{font-size:10.5px;border-radius:3px;padding:0 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sun{color:#c0392b}.sat{color:#2e6da4}
@@ -414,11 +417,11 @@ function calColor(c){return (S.main.gcalColor||{})[c.id]||c.backgroundColor||'#2
 function gEvents(ds){const out=[];for(const e of (G.events[ds]||[])){const c=G.cals.find(x=>x.id===e.cal);if(c&&gIsShown(c))out.push({...e,color:calColor(c),g:true,calName:c.summary})}return out}
 function gBanner(){if(!(S.main.gcalOn&&user&&!gConnected()))return '';return `<div class="gban"><span>Google 캘린더 연결이 풀려서 새 일정을 못 불러오고 있어요</span><button class="btn pri" data-act="gconnect">캘린더 새로 불러오기</button></div>`}
 function allAppts(ds){return [...getDay(ds).appts,...gEvents(ds)]}
-function gSaveTok(tok){gTok={t:tok,exp:Date.now()+55*60e3};try{localStorage.setItem('fplanner.gtok',JSON.stringify(gTok))}catch(e){}}
+function gSaveTok(tok){gTok={t:tok,exp:Date.now()+55*60e3,v:2};try{localStorage.setItem('fplanner.gtok',JSON.stringify(gTok))}catch(e){}}
 function gFromResult(r){const c=r&&FB.GoogleAuthProvider.credentialFromResult(r);if(!c||!c.accessToken)return false;gSaveTok(c.accessToken);if(!S.main.gcalOn){S.main.gcalOn=true;touch('main')}G.fetched={};gState='';gRefresh();return true}
 async function gConnect(){
   if(!user||!FB){toast('먼저 로그인해 주세요');return}
-  const p=new FB.GoogleAuthProvider();p.addScope(GSCOPE);if(user.email)p.setCustomParameters({login_hint:user.email});
+  const p=new FB.GoogleAuthProvider();p.addScope(GSCOPE);p.addScope(GWSCOPE);if(user.email)p.setCustomParameters({login_hint:user.email});
   const hasG=user.providerData.some(x=>x.providerId==='google.com');
   try{const r=hasG?await FB.reauthenticateWithPopup(user,p):await FB.linkWithPopup(user,p);gFromResult(r);toast('Google 캘린더를 연결했어요')}
   catch(e){const c=e&&e.code;
@@ -456,7 +459,8 @@ async function gRefresh(force){
   gBusy=true;gState='loading';
   try{
     const L=await gget('/users/me/calendarList?maxResults=250');
-    G.cals=(L.items||[]).map(c=>({id:c.id,summary:c.summaryOverride||c.summary||c.id,backgroundColor:c.backgroundColor,selected:c.selected!==false,primary:!!c.primary}));
+    G.cals=(L.items||[]).map(c=>({id:c.id,summary:c.summaryOverride||c.summary||c.id,backgroundColor:c.backgroundColor,selected:c.selected!==false,primary:!!c.primary,role:c.accessRole}));
+    await gFlush();
     if(need.length){
       const lo=need[0],hi=need[need.length-1];const[ly,lm]=lo.split('-').map(Number),[hy,hmo]=hi.split('-').map(Number);
       const tMin=new Date(ly,lm-1,1).toISOString(),tMax=new Date(hy,hmo,1).toISOString();
@@ -471,9 +475,17 @@ async function gRefresh(force){
   }catch(e){gState=e.code===401?'':'error:'+(e.msg||e.code);gErrAt=Date.now();console.error(e)}
   gBusy=false;safeRender();
 }
-function gAuto(){if(gConnected()&&!gBusy&&(!gState.startsWith('error')||Date.now()-gErrAt>5*60e3))gRefresh()}
+function gAuto(){if(gConnected()&&!gBusy&&(!gState.startsWith('error')||Date.now()-gErrAt>5*60e3)){gRefresh();if(typeof gFlush==='function'&&!gBusy)gFlush()}}
 setInterval(gAuto,5*60e3);window.addEventListener('online',()=>setTimeout(gAuto,2000));
-function gErrText(s){const m=s.slice(6);if(/has not been used|disabled|accessNotConfigured/i.test(m))return 'Google Calendar API가 꺼져 있어요. 안내서 7단계 1번을 확인해 주세요.';if(/insufficient|scope/i.test(m))return '캘린더 읽기 권한이 허용되지 않았어요. 다시 연결하면서 캘린더 권한에 체크해 주세요.';return '불러오기 실패: '+m}
+function gErrText(s){const m=s.slice(6);if(m==='write-scope')return 'Google 캘린더에 일정을 넣는 권한이 허용되지 않았어요. 연결 해제 후 다시 연결하면서 "일정 보기 및 수정" 권한에 체크해 주세요.';if(/has not been used|disabled|accessNotConfigured/i.test(m))return 'Google Calendar API가 꺼져 있어요. 안내서 7단계 1번을 확인해 주세요.';if(/insufficient|scope/i.test(m))return '캘린더 읽기 권한이 허용되지 않았어요. 다시 연결하면서 캘린더 권한에 체크해 주세요.';return '불러오기 실패: '+m}
+function gPushPanel(){if(!S.main.gcalOn)return '';const w=gWritable();const pend=pendingList().length;
+  const needUp=gConnected()&&!gCanWrite();
+  return `<div class="sec" style="margin-top:16px">플래너 → Google 보내기 <small>Send</small></div>
+  ${needUp?'<p style="font-size:12px;color:#c0392b">일정을 보내려면 권한을 하나 더 허용해야 해요. <a href="#" data-act="gupgrade" style="color:var(--accent)">권한 추가하고 다시 연결</a></p>':''}
+  <div class="li"><span style="flex:1">보낼 캘린더</span><select class="inp" style="width:auto;max-width:60%" data-bind="gpushcal">${w.length?w.map(c=>`<option value="${esc(c.id)}" ${c.id===gDefaultCal()?'selected':''}>${esc(c.summary)}</option>`).join(''):'<option>연결 후 선택할 수 있어요</option>'}</select></div>
+  <div class="li"><label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" data-act="gpushdef" ${S.main.gPushDefault!==false?'checked':''}> 새 일정을 만들 때 'Google 캘린더에도 추가'를 기본으로 켜기</label></div>
+  ${pend?`<p style="font-size:12px" class="muted">보내기 대기 중인 일정 ${pend}개 · 연결되면 자동으로 보내요</p>`:''}
+  <div style="margin-top:8px"><button class="btn" data-act="sendallm" ${gCanWrite()?'':'disabled'}>플래너 일정 한 번에 보내기…</button></div>`}
 function vGcal(){
   const conn=gConnected(),t=TODAY();
   let status;
@@ -487,7 +499,7 @@ function vGcal(){
   return `<div class="pages"><section class="page">
   <h2 class="ttl">캘린더 연결 · Google</h2>
   <div class="virtue" style="margin-top:0">${status}${err}</div>
-  <div class="sec" style="margin-top:16px">연결된 캘린더 <small>Calendars</small></div>${cals}
+  ${gPushPanel()}<div class="sec" style="margin-top:16px">연결된 캘린더 <small>Calendars</small></div>${cals}
   <p class="muted" style="font-size:12px;margin-top:10px">색상을 누르면 플래너에서 보일 색을 바꿀 수 있어요. 표시를 끄면 그 캘린더 일정은 숨겨져요. 이 설정은 다른 기기에도 똑같이 적용돼요.</p>
   </section><section class="page"><div class="sec">다가오는 일정 · 60일 <small>Upcoming</small></div>${up||'<p class="muted" style="font-size:12px">표시할 일정이 없어요.</p>'}</section>${rings(6)}</div>`}
 function gEvtModal(ds,id){const e=gEvents(ds).find(x=>x.id===id);if(!e)return;
@@ -495,6 +507,50 @@ function gEvtModal(ds,id){const e=gEvents(ds).find(x=>x.id===id);if(!e)return;
   <p style="font-size:13px;line-height:1.7">${ds.replaceAll('-','.')} (${WD[parse(ds).getDay()]}) · ${e.allDay?'종일':esc(e.start)+'–'+esc(e.end)}<br><span style="color:${e.color}">●</span> ${esc(e.calName)}${e.loc?'<br>📍 '+esc(e.loc):''}</p>
   <p class="muted" style="font-size:12px">Google 캘린더에서 불러온 일정이라 여기서는 고칠 수 없어요.</p>
   <div class="acts">${e.link?`<a class="btn" href="${esc(e.link)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">Google 캘린더에서 열기</a>`:''}<button class="btn pri" data-act="close">닫기</button></div></div></div>`}
+
+/* ---------- push planner events to Google (simple mode) ---------- */
+const GWSCOPE='https://www.googleapis.com/auth/calendar.events';
+const gCanWrite=()=>gConnected()&&gTok.w!==false&&gTok.v>=2;
+function gWritable(){return G.cals.filter(c=>c.role==='owner'||c.role==='writer')}
+function gDefaultCal(){const w=gWritable();const d=S.main.gPushCal;return (w.find(c=>c.id===d)||w.find(c=>c.primary)||w[0]||{id:'primary'}).id}
+function gNewId(){const a='0123456789abcdefghijklmnopqrstuv';let s='fp';for(let i=0;i<24;i++)s+=a[Math.floor(Math.random()*32)];return s}
+function gBody(ds,a){const tz=Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Seoul';
+  const b={id:a.gid,summary:a.title};
+  if(a.allDay){b.start={date:ds};b.end={date:addDays(ds,1)}}
+  else{const at=(d,t)=>t==='24:00'?{dateTime:addDays(d,1)+'T00:00:00',timeZone:tz}:{dateTime:d+'T'+t+':00',timeZone:tz};b.start=at(ds,a.start);b.end=at(ds,a.end)}
+  return b}
+function pendingList(){const out=[];for(const ym of Object.keys(S.months))for(const [ds,d] of Object.entries(S.months[ym].days||{}))for(const a of (d.appts||[]))if(a.gpush)out.push([ds,a]);return out}
+let gPushing=false;
+async function gFlush(){
+  if(gPushing||!gCanWrite()||!navigator.onLine)return 0;
+  const list=pendingList();if(!list.length)return 0;
+  gPushing=true;let n=0;
+  for(const [ds,a] of list){
+    try{
+      const r=await fetch(`${GAPI}/calendars/${encodeURIComponent(a.gpush)}/events`,{method:'POST',headers:{Authorization:'Bearer '+gTok.t,'Content-Type':'application/json'},body:JSON.stringify(gBody(ds,a))});
+      if(r.ok||r.status===409){ // 409 = 다른 기기가 이미 보냄
+        if(r.ok){try{const ev=await r.json();gAdd(G.events,a.gpush,ev)}catch(e){}}
+        const d=getDay(ds,true);d.appts=d.appts.filter(x=>x.id!==a.id);touch(dayKey(ds));delete G.fetched[ds.slice(0,7)];n++}
+      else if(r.status===401){gTok=null;try{localStorage.removeItem('fplanner.gtok')}catch(e){}break}
+      else if(r.status===403){let m='';try{m=(await r.json()).error.message}catch(e){}
+        if(/insufficient|scope/i.test(m)){gTok.w=false;try{localStorage.setItem('fplanner.gtok',JSON.stringify(gTok))}catch(e){}gState='error:write-scope';gErrAt=Date.now()}
+        else{gState='error:'+m;gErrAt=Date.now()}break}
+      else{let m='';try{m=(await r.json()).error.message}catch(e){}gState='error:'+(m||r.status);gErrAt=Date.now();break}
+    }catch(e){break}
+  }
+  gPushing=false;saveG();
+  if(n)toast(`${n}개 일정을 Google 캘린더에 보냈어요`);
+  safeRender();return n;
+}
+function queuePush(ds,a,cal){a.gpush=cal||gDefaultCal();a.gid=a.gid||gNewId()}
+function sendAllModal(){
+  const t=TODAY();const all=[],fut=[];
+  for(const ym of Object.keys(S.months))for(const [ds,d] of Object.entries(S.months[ym].days||{}))for(const a of (d.appts||[]))if(!a.gpush){all.push([ds,a]);if(ds>=t)fut.push([ds,a])}
+  const w=gWritable();
+  $('#modalRoot').innerHTML=`<div class="modal" data-act="mbg"><div class="box"><h3>플래너 일정을 Google로 보내기</h3>
+  <p style="font-size:13px;line-height:1.6">플래너에만 있는 일정이 <b>${all.length}개</b> 있어요 (오늘 이후 ${fut.length}개). 보낸 일정은 Google 일정이 되고, 그 뒤로 수정·삭제는 Google 캘린더 앱에서 해요.</p>
+  <label>보낼 캘린더</label><select class="inp" id="sendCal">${w.map(c=>`<option value="${esc(c.id)}" ${c.id===gDefaultCal()?'selected':''}>${esc(c.summary)}</option>`).join('')}</select>
+  <div class="acts" style="flex-wrap:wrap"><button class="btn" data-act="close">취소</button><button class="btn" data-act="sendall" data-scope="future" ${fut.length?'':'disabled'}>오늘 이후만 (${fut.length})</button><button class="btn pri" data-act="sendall" data-scope="all" ${all.length?'':'disabled'}>전부 보내기 (${all.length})</button></div></div></div>`}
 
 /* ---------- chrome ---------- */
 const VIEWS=[['daily','일일'],['weekly','주간'],['monthly','월간'],['yearly','연간'],['mandal','만다라트'],['check','체크리스트'],['master','마스터 목록'],['values','가치·목표'],['gcal','캘린더 연결']];
@@ -537,7 +593,7 @@ function vDaily(){
   const AP=allAppts(ds);const ap=layoutAppts(AP);
   let slots='';for(let h=START;h<END;h++){slots+=`<div class="slot" data-act="apptnew" data-t="${pad(h)}:00"><span class="h">${h}</span></div><div class="slot half" data-act="apptnew" data-t="${pad(h)}:30"><span class="h">:30</span></div>`}
   const apHtml=ap.map(x=>{const top=(x.s-START*60)/30*H,ht=Math.max((x.e-x.s)/30*H-2,20);const c=x.color||ACOL[0];
-    return `<div class="appt" data-act="${x.g?'gevt':'apptedit'}" data-d="${ds}" data-id="${esc(x.id)}" title="${x.g?esc(x.calName):''}" style="top:${top}px;height:${ht}px;left:calc(40px + (100% - 40px)*${x.ci}/${x.n});width:calc((100% - 40px)/${x.n} - 3px);background:${c}22;border-color:${c}"><b>${esc(x.start)}–${esc(x.end)}</b><span class="ink">${esc(x.title)}</span></div>`}).join('');
+    return `<div class="appt" data-act="${x.g?'gevt':'apptedit'}" data-d="${ds}" data-id="${esc(x.id)}" title="${x.g?esc(x.calName):''}" style="top:${top}px;height:${ht}px;left:calc(40px + (100% - 40px)*${x.ci}/${x.n});width:calc((100% - 40px)/${x.n} - 3px);background:${c}22;border-color:${c}"><b>${x.gpush?'⇡ ':''}${esc(x.start)}–${esc(x.end)}</b><span class="ink">${esc(x.title)}</span></div>`}).join('');
   const wk=weekOfYear(ds),vi=wk%13,v=VIRTUES[vi];const vKey=sundayOf(ds);const vrec=(S.main.virtue||{})[vKey]||{};
   const sun=vKey;
   const vchk=WD.map((w,i)=>{const dd=addDays(sun,i);return `<button data-act="vtog" data-d="${dd}" class="${vrec[dd]?'on':''} ${dd===ds?'today':''}" title="${dd}">${w}</button>`}).join('');
@@ -694,6 +750,9 @@ function apptModal(ds,a,startT){const isNew=!a;a=a||{id:nid(),title:'',start:sta
     <label><input type="checkbox" id="aAll" ${a.allDay?'checked':''}> 종일</label>
     <div class="two" id="aTimes"><div><label>시작</label><input type="time" class="inp" id="aS" value="${esc(a.start)}" step="1800"></div><div><label>끝</label><input type="time" class="inp" id="aE" value="${esc(a.end)}" step="1800"></div></div>
     <label>색상</label><div class="swatches">${ACOL.map(c=>`<button data-act="swatch" data-c="${c}" style="background:${c}" class="${c===color?'on':''}"></button>`).join('')}</div>
+    ${S.main.gcalOn&&user?`<div style="margin-top:14px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--paper2)"><label style="margin:0;color:var(--ink);font-size:13px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="aG" ${a.gpush||(isNew&&S.main.gPushDefault!==false)?'checked':''}> Google 캘린더에도 추가</label>
+      <select class="inp" id="aGc" style="margin-top:6px">${(gWritable().length?gWritable():[{id:gDefaultCal(),summary:'기본 캘린더'}]).map(c=>`<option value="${esc(c.id)}" ${c.id===(a.gpush||gDefaultCal())?'selected':''}>${esc(c.summary)}</option>`).join('')}</select>
+      <div class="muted" style="font-size:11px;margin-top:6px">${gCanWrite()?'저장하면 바로 Google 캘린더로 보내요. 그 뒤 수정·삭제는 Google 캘린더 앱에서 해요.':gConnected()?'보내기 권한이 아직 없어요. 캘린더 연결 탭에서 권한을 추가하면 그때 자동으로 보내요.':'지금은 연결이 풀려 있어요. 저장해 두면 다시 연결될 때 자동으로 보내요.'}</div></div>`:''}
     <div class="acts">${isNew?'':'<button class="btn" data-act="apptdel">삭제</button>'}<span style="flex:1"></span><button class="btn" data-act="close">취소</button><button class="btn pri" data-act="apptsave">저장</button></div>
   </div></div>`;
   $('#aT').focus();
@@ -739,8 +798,9 @@ const ACT={
   swatch:el=>{modalCtx.color=el.dataset.c;document.querySelectorAll('.swatches button').forEach(b=>b.classList.toggle('on',b===el))},
   apptsave:()=>{const c=modalCtx;const day=getDay(c.ds,true);const t=$('#aT').value.trim()||'(제목 없음)';let s=$('#aS').value||'09:00',e=$('#aE').value||s;if(toMin(e)<=toMin(s)){const m=toMin(s)+30;e=pad(Math.min(23,Math.floor(m/60)))+':'+pad(m%60)}
     const obj={id:c.a.id,title:t,start:s,end:e,allDay:$('#aAll').checked,color:c.color};
+    const gc=$('#aG');if(gc&&gc.checked)queuePush(c.ds,obj,$('#aGc').value);
     if(c.isNew)day.appts.push(obj);else{const i=day.appts.findIndex(x=>x.id===obj.id);if(i>=0)day.appts[i]=obj}
-    touch(dayKey(c.ds));closeModal();render()},
+    touch(dayKey(c.ds));closeModal();render();if(obj.gpush)gFlush()},
   apptdel:()=>{const c=modalCtx;const day=getDay(c.ds,true);day.appts=day.appts.filter(x=>x.id!==c.a.id);touch(dayKey(c.ds));closeModal();render()},
   close:closeModal,
   mbg:(el,e)=>{if(e.target===el)closeModal()},
@@ -776,6 +836,10 @@ const ACT={
   gdisc:()=>{gTok=null;G={cals:[],events:{},fetched:{},lastSync:0};try{localStorage.removeItem('fplanner.gtok');localStorage.removeItem('fplanner.gcal')}catch(e){}S.main.gcalOn=false;touch('main');render();toast('연결을 해제했어요')},
   gshow:el=>{S.main.gcalShow??={};S.main.gcalShow[el.dataset.id]=el.checked;touch('main');render()},
   gevt:el=>gEvtModal(el.dataset.d,el.dataset.id),
+  gupgrade:(el,e)=>{e&&e.preventDefault();gTok=null;try{localStorage.removeItem('fplanner.gtok')}catch(x){}gConnect()},
+  gpushdef:el=>{S.main.gPushDefault=el.checked;touch('main')},
+  sendallm:()=>sendAllModal(),
+  sendall:el=>{const cal=$('#sendCal').value;const t=TODAY();let n=0;for(const ym of Object.keys(S.months))for(const [ds,d] of Object.entries(S.months[ym].days||{})){let ch=false;for(const a of (d.appts||[]))if(!a.gpush&&(el.dataset.scope==='all'||ds>=t)){queuePush(ds,a,cal);ch=true;n++}if(ch)touch(dayKey(ds))}closeModal();toast(n+'개 일정을 보내는 중…');gFlush()},
   google:async()=>{const p=new FB.GoogleAuthProvider();try{await FB.signInWithPopup(auth,p);closeModal()}catch(e){if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment','auth/cancelled-popup-request'].includes(e.code)){FB.signInWithRedirect(auth,p)}else if(e.code!=='auth/popup-closed-by-user')aerr(e)}},
   signin:async()=>{try{await FB.signInWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);closeModal()}catch(e){aerr(e)}},
   signup:async()=>{try{await FB.createUserWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);closeModal();toast('가입했어요')}catch(e){aerr(e)}},
@@ -816,12 +880,25 @@ const BIND={
   valdesc:el=>{const v=findIn(S.main.values,el.dataset.id);if(v){v.desc=el.value;touch('main')}},
   goalt:el=>{const g=findIn(S.main.goals,el.dataset.id);if(g){g.t=el.value;touch('main')}},
   goaldue:el=>{const g=findIn(S.main.goals,el.dataset.id);if(g){g.due=el.value;touch('main')}},
+  gpushcal:el=>{S.main.gPushCal=el.value;touch('main')},
   gcolor:el=>{S.main.gcalColor??={};S.main.gcalColor[el.dataset.id]=el.value;touch('main');render()},
   goalcat:el=>{const g=findIn(S.main.goals,el.dataset.id);if(g){g.cat=el.value;touch('main');render()}}
 };
 const RENDER_ON_CHANGE=new Set(['jump','msel','cltpl','goalcat','gcolor']);
 document.addEventListener('input',e=>{const b=e.target.dataset&&e.target.dataset.bind;if(b&&BIND[b]&&!RENDER_ON_CHANGE.has(b))BIND[b](e.target)});
 document.addEventListener('change',e=>{const b=e.target.dataset&&e.target.dataset.bind;if(b&&BIND[b]&&RENDER_ON_CHANGE.has(b))BIND[b](e.target)});
+
+/* ---------- swipe (mobile) ---------- */
+(function(){let x0=0,y0=0,t0=0,ok=false;
+  const SW=new Set(['daily','weekly','monthly','yearly']);
+  document.addEventListener('touchstart',e=>{ok=false;if(e.touches.length!==1||!SW.has(ui.view)||$('#modalRoot').innerHTML)return;
+    const t=e.touches[0];if(!t.target.closest('#pages')||t.target.closest('input,textarea,select,.post'))return;
+    if(t.clientX<24||t.clientX>window.innerWidth-24)return; // 화면 가장자리는 휴대폰의 '뒤로 가기' 제스처용
+    x0=t.clientX;y0=t.clientY;t0=Date.now();ok=true},{passive:true});
+  document.addEventListener('touchend',e=>{if(!ok)return;ok=false;const t=e.changedTouches[0];const dx=t.clientX-x0,dy=t.clientY-y0;
+    if(Date.now()-t0>700||Math.abs(dx)<60||Math.abs(dx)<Math.abs(dy)*1.5)return;
+    const n=dx<0?1:-1;shift(n);const el=$('#pages');if(el){el.classList.add(n>0?'slide-n':'slide-p')}},{passive:true});
+})();
 
 /* ---------- start ---------- */
 (function(){const h=(location.hash||'').slice(1);if(VFN[h])ui.view=h})();

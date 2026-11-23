@@ -1,5 +1,5 @@
 // 오프라인 실행을 위한 서비스 워커. 앱을 고치면 VERSION 숫자를 올리세요.
-const VERSION='fp-v8';
+const VERSION='fp-v9';
 const SHELL=['./','./index.html','./firebase-config.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const FBV='10.12.2';
 const EXTRA=['firebase-app.js','firebase-auth.js','firebase-firestore.js'].map(f=>`https://www.gstatic.com/firebasejs/${FBV}/${f}`);

@@ -175,6 +175,14 @@ h2.ttl{font-family:'Gowun Batang',serif;font-size:22px;margin:0 0 12px;display:f
   .wd .wh{flex-direction:column;align-items:flex-start;gap:0;border-bottom:0;margin:0;padding:0}
   .wbody .wi{font-size:13px}
 }
+.tmeta{font-size:10.5px;color:var(--muted);font-weight:400}
+.task .tmeta{grid-column:3/5;padding:0 2px 5px;margin-top:-4px}
+.t-done{color:#2e7d4f}.t-del{color:#b03a2e}
+.wi.t-done,.e.t-done{text-decoration:line-through;color:var(--muted)}
+.wi.t-del,.e.t-del{text-decoration:line-through;color:#b03a2e;opacity:.75}
+.wi.t-fwd,.e.t-fwd,.wi.t-dlg,.e.t-dlg{color:var(--muted)}
+.wi .ic,.e .ic{font-weight:700;margin-right:2px}
+.wsum{font-size:12px;color:var(--muted);margin:0 0 8px;line-height:1.6}
 .gban{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between;background:var(--accentSoft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:12.5px}
 .mc .e{font-size:10.5px;border-radius:3px;padding:0 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sun{color:#c0392b}.sat{color:#2e6da4}
@@ -320,7 +328,7 @@ const TEMPLATES={
  '여행 짐':['옷·속옷','세면도구','상비약','충전기·보조배터리','우산','현금·카드','여권·티켓'],
  '주간 리뷰':['지난주 완료/미완료 업무 점검','마스터 목록 정리','다음 주 일정 확인','역할별 큰 돌 정하기','가치·목표 다시 읽기','이번 주 덕목 반성']
 };
-const STAT={'':['',''],done:['✓','완료'],prog:['•','진행 중'],fwd:['→','내일로 이월'],dlg:['○','위임함'],del:['×','삭제']};
+const STAT={'':['',''],done:['✓','완료'],prog:['•','진행 중'],fwd:['→','내일로 이월'],dlg:['○','위임함'],del:['×','못함']};
 const STAT_ORDER=['','done','prog','fwd','dlg','del'];
 
 /* ---------- state ---------- */
@@ -346,15 +354,29 @@ const SYNC_TXT={nocfg:'이 기기에만 저장',local:'이 기기에만 저장 �
 function setSync(k){const el=$('#sync');el.className=k;el.innerHTML='<b></b>'+(SYNC_TXT[k]||'')}
 function updateSync(){if(!CFG)return setSync('nocfg');if(!user)return setSync('local');if(!navigator.onLine)return setSync('offline');setSync(pendingMeta||Object.keys(timers).length?'pending':'ok')}
 window.addEventListener('online',updateSync);window.addEventListener('offline',updateSync);
-function touch(key){saveLocal();if(!user)return;clearTimeout(timers[key]);timers[key]=setTimeout(()=>{delete timers[key];writeKey(key);updateSync()},700);updateSync()}
+// 아직 서버로 못 올라간 날짜/설정을 기억해 두는 목록 (앱을 닫았다 켜도 유지)
+let pendDays=new Set(),pendMain=false;
+try{const o=JSON.parse(localStorage.getItem('fplanner.pend')||'{}');(o.d||[]).forEach(x=>pendDays.add(x));pendMain=!!o.m}catch(e){}
+function savePend(){try{localStorage.setItem('fplanner.pend',JSON.stringify({d:[...pendDays],m:pendMain}))}catch(e){}}
+function touchDay(ds){pendDays.add(ds);savePend();touch(dayKey(ds))}
+function touch(key){if(key==='main'&&!pendMain){pendMain=true;savePend()}saveLocal();if(!user)return;clearTimeout(timers[key]);timers[key]=setTimeout(()=>{delete timers[key];writeKey(key);updateSync()},400);updateSync()}
+function flushAll(){saveLocal();for(const k of Object.keys(timers)){clearTimeout(timers[k]);delete timers[k];writeKey(k)}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushAll()});
+window.addEventListener('pagehide',flushAll);
+document.addEventListener('focusout',e=>{if(e.target&&/^(INPUT|TEXTAREA)$/.test(e.target.tagName))flushAll()});
 function ref(id){return FB.doc(fdb,'users',user.uid,'planner',id)}
 function writeKey(key){
   if(!user||!FB)return;
-  let id,patch={},n=0;
-  if(key==='main'){id='main';for(const f of Object.keys(S.main)){const j=JSON.stringify(S.main[f]??null);if(last['main.'+f]!==j){patch[f]=S.main[f]??null;last['main.'+f]=j;n++}}}
-  else{const ym=key.slice(2),m=S.months[ym];if(!m)return;id=key;const days={};for(const d of Object.keys(m.days||{})){const j=JSON.stringify(m.days[d]);if(last['day.'+d]!==j){days[d]=m.days[d];last['day.'+d]=j;n++}}patch={days}}
-  if(!n)return;
-  FB.setDoc(ref(id),JSON.parse(JSON.stringify(patch)),{merge:true}).catch(e=>{console.error(e);setSync('err')});
+  let id,patch={},n=0,wrote=[];
+  if(key==='main'){id='main';for(const f of Object.keys(S.main)){const j=JSON.stringify(S.main[f]??null);if(last['main.'+f]!==j){patch[f]=S.main[f]??null;last['main.'+f]=j;n++}}
+    if(!n){pendMain=false;savePend();return}}
+  else{const ym=key.slice(2),m=S.months[ym];if(!m)return;id=key;const days={};
+    for(const d of Object.keys(m.days||{})){const j=JSON.stringify(m.days[d]);if(last['day.'+d]!==j){days[d]=m.days[d];last['day.'+d]=j;n++;wrote.push(d)}else if(pendDays.has(d))pendDays.delete(d)}
+    patch={days};savePend();if(!n)return}
+  FB.setDoc(ref(id),JSON.parse(JSON.stringify(patch)),{merge:true}).then(()=>{
+    if(key==='main'){if(!timers.main){pendMain=false;savePend()}}
+    else{const m=S.months[key.slice(2)];wrote.forEach(d=>{if(m&&JSON.stringify(m.days[d])===last['day.'+d])pendDays.delete(d)});savePend()}
+  }).catch(e=>{console.error(e);setSync('err')});
 }
 function pushAll(){writeKey('main');Object.keys(S.months).forEach(k=>writeKey('m-'+k));updateSync()}
 function localHasData(){const m=S.main;return Object.keys(S.months).some(k=>Object.keys(S.months[k].days||{}).length)||m.mission||m.values.length||m.goals.length||m.master.length||m.checklists.length}
@@ -365,12 +387,19 @@ function listen(){
     pendingMeta=snap.metadata.hasPendingWrites;
     if(!firstServer&&!snap.metadata.fromCache){firstServer=true;
       if(snap.empty){if(localHasData())pushAll();updateSync();return}}
-    let changed=false;
-    snap.docChanges().forEach(ch=>{if(ch.type==='removed')return;const d=ch.doc;if(timers[d.id])return;const b=d.data();if(!b)return;
-      if(d.id==='main'){const nm={...defaultMain(),...b};delete nm.days;if(JSON.stringify(nm)!==JSON.stringify(S.main)){S.main=nm;changed=true}Object.keys(nm).forEach(f=>last['main.'+f]=JSON.stringify(nm[f]??null))}
-      else if(d.id.startsWith('m-')){const ym=d.id.slice(2);const days=b.days||{};const cur=S.months[ym]||{days:{}};
-        if(JSON.stringify(days)!==JSON.stringify(cur.days)){S.months[ym]={days};changed=true}Object.keys(days).forEach(k=>last['day.'+k]=JSON.stringify(days[k]))}});
+    let changed=false;const rewrite=new Set();
+    snap.docChanges().forEach(ch=>{if(ch.type==='removed')return;const d=ch.doc;const b=d.data();if(!b)return;
+      if(d.id==='main'){if(timers.main||pendMain){rewrite.add('main');return}
+        const nm={...defaultMain(),...b};delete nm.days;if(JSON.stringify(nm)!==JSON.stringify(S.main)){S.main=nm;changed=true}Object.keys(nm).forEach(f=>last['main.'+f]=JSON.stringify(nm[f]??null))}
+      else if(d.id.startsWith('m-')){const ym=d.id.slice(2);const days=b.days||{};const cur=(S.months[ym]||{days:{}}).days||{};const merged={};
+        for(const k of Object.keys(days)){last['day.'+k]=JSON.stringify(days[k]);
+          if(pendDays.has(k)&&cur[k]){merged[k]=cur[k];rewrite.add(d.id)}else merged[k]=days[k]}
+        for(const k of Object.keys(cur))if(!(k in merged)&&pendDays.has(k)){merged[k]=cur[k];rewrite.add(d.id)}
+        if(JSON.stringify(merged)!==JSON.stringify(cur)){S.months[ym]={days:merged};changed=true}}});
+    // 이 기기에만 있고 아직 못 올린 날짜(서버 문서가 없는 달 포함)도 다시 올리기
+    if(firstServer)for(const ds of pendDays)rewrite.add(dayKey(ds));
     if(changed){saveLocal();applyPrefs();safeRender()}
+    rewrite.forEach(k=>{if(!timers[k])touch(k)});
     updateSync();
   },err=>{console.error(err);setSync('err')});
 }
@@ -538,7 +567,7 @@ async function gFlush(){
       const r=await fetch(`${GAPI}/calendars/${encodeURIComponent(a.gpush)}/events`,{method:'POST',headers:{Authorization:'Bearer '+gTok.t,'Content-Type':'application/json'},body:JSON.stringify(gBody(ds,a))});
       if(r.ok||r.status===409){ // 409 = 다른 기기가 이미 보냄
         if(r.ok){try{const ev=await r.json();gAdd(G.events,a.gpush,ev)}catch(e){}}
-        const d=getDay(ds,true);d.appts=d.appts.filter(x=>x.id!==a.id);touch(dayKey(ds));delete G.fetched[ds.slice(0,7)];n++}
+        const d=getDay(ds,true);d.appts=d.appts.filter(x=>x.id!==a.id);touchDay(ds);delete G.fetched[ds.slice(0,7)];n++}
       else if(r.status===401){gTok=null;try{localStorage.removeItem('fplanner.gtok')}catch(e){}break}
       else if(r.status===403){let m='';try{m=(await r.json()).error.message}catch(e){}
         if(/insufficient|scope/i.test(m)){gTok.w=false;try{localStorage.setItem('fplanner.gtok',JSON.stringify(gTok))}catch(e){}gState='error:write-scope';gErrAt=Date.now()}
@@ -559,6 +588,19 @@ function sendAllModal(){
   <p style="font-size:13px;line-height:1.6">플래너에만 있는 일정이 <b>${all.length}개</b> 있어요 (오늘 이후 ${fut.length}개). 보낸 일정은 Google 일정이 되고, 그 뒤로 수정·삭제는 Google 캘린더 앱에서 해요.</p>
   <label>보낼 캘린더</label><select class="inp" id="sendCal">${w.map(c=>`<option value="${esc(c.id)}" ${c.id===gDefaultCal()?'selected':''}>${esc(c.summary)}</option>`).join('')}</select>
   <div class="acts" style="flex-wrap:wrap"><button class="btn" data-act="close">취소</button><button class="btn" data-act="sendall" data-scope="future" ${fut.length?'':'disabled'}>오늘 이후만 (${fut.length})</button><button class="btn pri" data-act="sendall" data-scope="all" ${all.length?'':'disabled'}>전부 보내기 (${all.length})</button></div></div></div>`}
+
+/* ---------- task tracking ---------- */
+const SICON={'':'□',done:'✓',prog:'•',fwd:'→',dlg:'○',del:'×'};
+const SWORD={'':'아직 안 함',done:'완료',prog:'진행 중',fwd:'또 이월',dlg:'위임',del:'못함'};
+const md=ds=>+ds.slice(5,7)+'/'+ +ds.slice(8);
+function chainEnd(ds,t){let d=ds,cur=t,g=0;while(cur.s==='fwd'&&cur.to&&g++<90){const nt=getDay(cur.to).tasks.find(y=>y.id===cur.toId);if(!nt)break;d=cur.to;cur=nt}return{d,t:cur}}
+function taskMeta(ds,x){const bits=[];
+  if(x.from)bits.push(`↪ ${md(x.from)}에서 이월${x.hop>1?' · '+x.hop+'회째':''}`);
+  if(x.s==='fwd'&&x.to){const e=chainEnd(ds,x);bits.push(e.d===ds?`→ ${md(x.to)}로 이월`:`→ ${md(x.to)}로 이월 · 결과: ${md(e.d)} ${SWORD[e.t.s||'']}`)}
+  return bits.join(' · ')}
+function taskShort(ds,x){if(x.s==='fwd'&&x.to){const e=chainEnd(ds,x);return e.d===ds?'':` <span class="tmeta">(${md(e.d)} ${SWORD[e.t.s||'']})</span>`}return x.from?` <span class="tmeta">(이월 ${x.hop||1}회째)</span>`:''}
+function taskStats(dates){const c={done:0,prog:0,fwd:0,dlg:0,del:0,'':0};let n=0;for(const ds of dates)for(const t of getDay(ds).tasks){c[t.s||'']++;n++}return n?c:null}
+function statsLine(label,c){if(!c)return '';return `<div class="wsum">${label} · <span class="t-done">✓ 완료 ${c.done}</span> · → 이월 ${c.fwd} · <span class="t-del">× 못함 ${c.del}</span>${c.dlg?' · ○ 위임 '+c.dlg:''}${c.prog?' · • 진행 중 '+c.prog:''} · □ 남음 ${c['']}</div>`}
 
 /* ---------- chrome ---------- */
 const VIEWS=[['daily','일일'],['weekly','주간'],['monthly','월간'],['yearly','연간'],['mandal','만다라트'],['check','체크리스트'],['master','마스터 목록'],['values','가치·목표'],['gcal','캘린더 연결']];
@@ -621,9 +663,9 @@ function vDaily(){
     <div class="dcols">
       <div>
         <div class="sec">우선순위 업무 목록 <small>Prioritized tasks</small></div>
-        <div class="legend">✓완료 · •진행 중 · →내일로 이월 · ○위임함 · ×삭제 <span class="muted">(상태 칸을 눌러 바꾸기)</span></div>
+        <div class="legend">✓완료 · •진행 중 · →내일로 이월 · ○위임함 · ×못함 <span class="muted">(상태 칸을 눌러 바꾸기)</span></div>
         <div class="addrow"><select class="inp" id="newp"><option>A</option><option selected>B</option><option>C</option></select><input class="inp" id="newtask" placeholder="할 일을 입력하고 Enter"><button class="btn pri" data-act="taskadd">추가</button></div>
-        ${tasks.map(t=>`<div class="task s-${t.s||'todo'}"><button class="st" data-act="tstat" data-id="${t.id}" title="${STAT[t.s||''][1]||'미완료'}">${STAT[t.s||''][0]}</button><span class="lb">${t.p}${t.n}</span><input class="bare ink" data-bind="task" data-id="${t.id}" value="${esc(t.t)}"><button class="x" data-act="tdel" data-id="${t.id}" title="지우기">×</button></div>`).join('')||'<div class="muted" style="font-size:12px;padding:10px 0">A는 꼭 해야 할 일, B는 해야 할 일, C는 하면 좋은 일이에요.</div>'}
+        ${tasks.map(t=>`<div class="task s-${t.s||'todo'}"><button class="st" data-act="tstat" data-id="${t.id}" title="${STAT[t.s||''][1]||'미완료'}">${STAT[t.s||''][0]}</button><span class="lb">${t.p}${t.n}</span><input class="bare ink" data-bind="task" data-id="${t.id}" value="${esc(t.t)}"><button class="x" data-act="tdel" data-id="${t.id}" title="지우기">×</button>${taskMeta(ui.date,t)?`<div class="tmeta">${esc(taskMeta(ui.date,t))}</div>`:''}</div>`).join('')||'<div class="muted" style="font-size:12px;padding:10px 0">A는 꼭 해야 할 일, B는 해야 할 일, C는 하면 좋은 일이에요.</div>'}
         <div class="tbtns"><button class="btn" data-act="renum">번호 재정렬</button><button class="btn" data-act="forward">미완료 → 내일로 이월</button></div>
       </div>
       <div>
@@ -649,7 +691,7 @@ function vWeekly(){
   const days=Array.from({length:7},(_,i)=>{const ds=addDays(sun,i),d=getDay(ds),dt=parse(ds),A=allAppts(ds);
     const items=[...A.filter(a=>a.allDay).map(a=>`<div class="wi ap" style="color:${a.color||ACOL[0]}">종일 ${esc(a.title)}</div>`),
       ...[...A.filter(a=>!a.allDay)].sort((a,b)=>toMin(a.start)-toMin(b.start)).map(a=>`<div class="wi ap" style="color:${a.color||ACOL[0]}">${esc(a.start)} ${esc(a.title)}</div>`),
-      ...[...d.tasks].sort((a,b)=>a.p.localeCompare(b.p)||a.n-b.n).map(x=>`<div class="wi ${x.s==='done'?'done':''}">${x.p}${x.n} ${esc(x.t)}</div>`)].join('');
+      ...[...d.tasks].sort((a,b)=>a.p.localeCompare(b.p)||a.n-b.n).map(x=>`<div class="wi t-${x.s||'todo'}" title="${SWORD[x.s||'']}"><span class="ic">${SICON[x.s||'']}</span>${x.p}${x.n} ${esc(x.t)}${taskShort(ds,x)}</div>`)].join('');
     return `<div class="wd ${ds===t?'today':''}"><div class="wh" data-act="goto" data-d="${ds}"><b class="${i==0?'sun':i==6?'sat':''}">${dt.getDate()}</b><span class="muted">${WD[i]}</span></div><div class="wbody">${items||'<div class="muted" style="font-size:11px">—</div>'}</div></div>`}).join('');
   return `<div class="pages single"><section class="page" style="padding-left:34px">
     <h2 class="ttl">주간 계획 <span class="muted" style="font-size:14px;font-family:'Noto Sans KR'">${sun.replaceAll('-','.')} – ${e.slice(5).replace('-','.')}</span>
@@ -662,6 +704,7 @@ function vWeekly(){
       <div><div class="sec">역할별 계획 <small>Roles</small></div>
         <textarea class="ruled ink" rows="2" data-bind="roles" placeholder="예) 팀장: 분기 보고서 초안 / 부모: 토요일 공원 / 나: 운동 3회">${esc(W.roles||'')}</textarea></div>
     </div>
+    ${statsLine('이번 주 업무',taskStats(Array.from({length:7},(_,i)=>addDays(sun,i))))}
     <div class="week">${days}</div>
   </section>${rings(7)}</div>`}
 
@@ -670,14 +713,15 @@ function vMonthly(){
   let cells='';for(let i=0;i<42;i++){const d=new Date(start);d.setDate(start.getDate()+i);const ds=ymd(d);const dd=getDay(ds);const out=d.getMonth()!==m-1;
     if(i>=35&&out&&d.getDay()===0)break;
     const ev=[...allAppts(ds).sort((a,b)=>(a.allDay?0:1)-(b.allDay?0:1)||toMin(a.start)-toMin(b.start)).map(a=>`<div class="e" style="background:${(a.color||ACOL[0])}22;border-left:2px solid ${a.color||ACOL[0]}">${esc(a.title)}${a.allDay?'':`<span class="tm"> ${esc(a.start)}</span>`}</div>`),
-      ...dd.tasks.filter(x=>x.p==='A').map(x=>`<div class="e" style="${x.s==='done'?'text-decoration:line-through;opacity:.6':''}">${x.p}${x.n} ${esc(x.t)}</div>`)];
+      ...[...dd.tasks].sort((a,b)=>a.p.localeCompare(b.p)||a.n-b.n).map(x=>`<div class="e t-${x.s||'todo'}" title="${SWORD[x.s||'']}"><span class="ic">${SICON[x.s||'']}</span>${esc(x.t)}</div>`)];
     cells+=`<div class="mc ${out?'out':''} ${ds===t?'today':''}" data-act="goto" data-d="${ds}"><span class="n ${d.getDay()==0?'sun':d.getDay()==6?'sat':''}">${d.getDate()}</span>${ev.slice(0,6).join('')}${ev.length>6?`<div class="e muted">+${ev.length-6}</div>`:''}</div>`}
   return `<div class="pages single"><section class="page" style="padding-left:34px">
     <h2 class="ttl">${y}년 ${m}월 <span class="navbtns" style="margin-left:auto"><button data-act="prev">‹</button><button data-act="today">이번 달</button><button data-act="next">›</button></span></h2>
     ${gBanner()}
     <div class="sec">이달의 목표 <small>Monthly goals</small></div>
     <textarea class="ruled ink" rows="2" data-bind="mgoal" placeholder="이번 달에 이루고 싶은 것">${esc((S.main.monthGoals||{})[ym]||'')}</textarea>
-    <div class="mgrid" style="margin-top:14px">${WD.map((w,i)=>`<div class="hd ${i==0?'sun':i==6?'sat':''}">${w}</div>`).join('')}${cells}</div>
+    <div style="margin-top:12px">${statsLine('이달 업무',taskStats(Array.from({length:new Date(y,m,0).getDate()},(_,i)=>`${ym}-${pad(i+1)}`)))}</div>
+    <div class="mgrid" style="margin-top:4px">${WD.map((w,i)=>`<div class="hd ${i==0?'sun':i==6?'sat':''}">${w}</div>`).join('')}${cells}</div>
   </section>${rings(7)}</div>`}
 
 function vYearly(){const y=ui.year;
@@ -779,7 +823,7 @@ function shift(n){const v=ui.view;
   else if(v==='monthly')ui.ym=addMonths(ui.ym,n);
   else if(v==='yearly')ui.year+=n;render()}
 function addTask(){const inp=$('#newtask');const t=inp.value.trim();if(!t)return;const p=$('#newp').value;const day=getDay(ui.date,true);
-  const n=Math.max(0,...day.tasks.filter(x=>x.p===p).map(x=>x.n))+1;day.tasks.push({id:nid(),p,n,t,s:''});touch(dayKey(ui.date));render();const ni=$('#newtask');ni&&ni.focus();$('#newp').value=p}
+  const n=Math.max(0,...day.tasks.filter(x=>x.p===p).map(x=>x.n))+1;day.tasks.push({id:nid(),p,n,t,s:''});touchDay(ui.date);render();const ni=$('#newtask');ni&&ni.focus();$('#newp').value=p}
 function findIn(arr,id){return arr.find(x=>x.id===id)}
 function weekObj(){const k=sundayOf(ui.date);S.main.weeks??={};S.main.weeks[k]??={focus:[],roles:''};S.main.weeks[k].focus??=[];return S.main.weeks[k]}
 function newChecklist(name,items){const l={id:nid(),name,date:'',items:(items||[]).map(t=>({id:nid(),t,done:false}))};S.main.checklists.push(l);S.main.curList=l.id;touch('main');render()}
@@ -795,12 +839,12 @@ const ACT={
   dark:()=>{S.main.dark=!S.main.dark;touch('main');applyPrefs()},
   hand:()=>{S.main.hand=!S.main.hand;touch('main');applyPrefs()},
   taskadd:addTask,
-  tstat:el=>{const day=getDay(ui.date,true),t=findIn(day.tasks,el.dataset.id);if(!t)return;t.s=STAT_ORDER[(STAT_ORDER.indexOf(t.s||'')+1)%STAT_ORDER.length];touch(dayKey(ui.date));render()},
-  tdel:el=>{const day=getDay(ui.date,true);day.tasks=day.tasks.filter(x=>x.id!==el.dataset.id);touch(dayKey(ui.date));render()},
-  renum:()=>{const day=getDay(ui.date,true);['A','B','C'].forEach(p=>{day.tasks.filter(x=>x.p===p).sort((a,b)=>a.n-b.n).forEach((x,i)=>x.n=i+1)});touch(dayKey(ui.date));render()},
+  tstat:el=>{const day=getDay(ui.date,true),t=findIn(day.tasks,el.dataset.id);if(!t)return;t.s=STAT_ORDER[(STAT_ORDER.indexOf(t.s||'')+1)%STAT_ORDER.length];touchDay(ui.date);render()},
+  tdel:el=>{const day=getDay(ui.date,true);day.tasks=day.tasks.filter(x=>x.id!==el.dataset.id);touchDay(ui.date);render()},
+  renum:()=>{const day=getDay(ui.date,true);['A','B','C'].forEach(p=>{day.tasks.filter(x=>x.p===p).sort((a,b)=>a.n-b.n).forEach((x,i)=>x.n=i+1)});touchDay(ui.date);render()},
   forward:()=>{const day=getDay(ui.date,true);const nx=addDays(ui.date,1);const nd=getDay(nx,true);let c=0;
-    day.tasks.filter(x=>x.s===''||x.s==='prog').forEach(x=>{x.s='fwd';const n=Math.max(0,...nd.tasks.filter(y=>y.p===x.p).map(y=>y.n))+1;nd.tasks.push({id:nid(),p:x.p,n,t:x.t,s:''});c++});
-    touch(dayKey(ui.date));touch(dayKey(nx));render();toast(c?`${c}개 업무를 내일로 옮겼어요`:'옮길 미완료 업무가 없어요')},
+    day.tasks.filter(x=>x.s===''||x.s==='prog').forEach(x=>{x.s='fwd';const id=nid();const n=Math.max(0,...nd.tasks.filter(y=>y.p===x.p).map(y=>y.n))+1;nd.tasks.push({id,p:x.p,n,t:x.t,s:'',from:ui.date,fromId:x.id,hop:(x.hop||0)+1});x.to=nx;x.toId=id;c++});
+    touchDay(ui.date);touchDay(nx);render();toast(c?`${c}개 업무를 내일로 옮겼어요`:'옮길 미완료 업무가 없어요')},
   apptnew:el=>apptModal(ui.date,null,el.dataset.t),
   apptedit:el=>{const a=findIn(getDay(ui.date).appts,el.dataset.id);if(a)apptModal(ui.date,a)},
   swatch:el=>{modalCtx.color=el.dataset.c;document.querySelectorAll('.swatches button').forEach(b=>b.classList.toggle('on',b===el))},
@@ -808,12 +852,12 @@ const ACT={
     const obj={id:c.a.id,title:t,start:s,end:e,allDay:$('#aAll').checked,color:c.color};
     const gc=$('#aG');if(gc&&gc.checked)queuePush(c.ds,obj,$('#aGc').value);
     if(c.isNew)day.appts.push(obj);else{const i=day.appts.findIndex(x=>x.id===obj.id);if(i>=0)day.appts[i]=obj}
-    touch(dayKey(c.ds));closeModal();render();if(obj.gpush)gFlush()},
-  apptdel:()=>{const c=modalCtx;const day=getDay(c.ds,true);day.appts=day.appts.filter(x=>x.id!==c.a.id);touch(dayKey(c.ds));closeModal();render()},
+    touchDay(c.ds);closeModal();render();if(obj.gpush)gFlush()},
+  apptdel:()=>{const c=modalCtx;const day=getDay(c.ds,true);day.appts=day.appts.filter(x=>x.id!==c.a.id);touchDay(c.ds);closeModal();render()},
   close:closeModal,
   mbg:(el,e)=>{if(e.target===el)closeModal()},
-  postadd:()=>{getDay(ui.date,true).posts.push({id:nid(),text:''});touch(dayKey(ui.date));render();const ps=document.querySelectorAll('.post textarea');ps.length&&ps[ps.length-1].focus()},
-  postdel:el=>{const d=getDay(ui.date,true);d.posts=d.posts.filter(p=>p.id!==el.dataset.id);touch(dayKey(ui.date));render()},
+  postadd:()=>{getDay(ui.date,true).posts.push({id:nid(),text:''});touchDay(ui.date);render();const ps=document.querySelectorAll('.post textarea');ps.length&&ps[ps.length-1].focus()},
+  postdel:el=>{const d=getDay(ui.date,true);d.posts=d.posts.filter(p=>p.id!==el.dataset.id);touchDay(ui.date);render()},
   vtog:el=>{const k=sundayOf(el.dataset.d);S.main.virtue??={};S.main.virtue[k]??={};S.main.virtue[k][el.dataset.d]=!S.main.virtue[k][el.dataset.d];touch('main');render()},
   focusadd:()=>{const i=$('#newfocus');const t=i.value.trim();if(!t)return;weekObj().focus.push({id:nid(),t,done:false});touch('main');render();$('#newfocus').focus()},
   focustog:el=>{const f=findIn(weekObj().focus,el.dataset.id);if(f){f.done=el.checked;touch('main');render()}},
@@ -829,7 +873,7 @@ const ACT={
   madd:()=>{const i=$('#newm');const t=i.value.trim();if(!t)return;S.main.master.push({id:nid(),t,cat:$('#newmc').value,done:false});const c=$('#newmc').value;touch('main');render();$('#newmc').value=c;$('#newm').focus()},
   mtog:el=>{const x=findIn(S.main.master,el.dataset.id);if(x){x.done=el.checked;touch('main');render()}},
   mdel2:el=>{S.main.master=S.main.master.filter(x=>x.id!==el.dataset.id);touch('main');render()},
-  mtoday:el=>{const x=findIn(S.main.master,el.dataset.id);if(!x)return;const t=TODAY(),d=getDay(t,true);const n=Math.max(0,...d.tasks.filter(y=>y.p==='B').map(y=>y.n))+1;d.tasks.push({id:nid(),p:'B',n,t:x.t,s:''});S.main.master=S.main.master.filter(y=>y.id!==x.id);touch('main');touch(dayKey(t));render();toast('오늘 업무(B)로 옮겼어요')},
+  mtoday:el=>{const x=findIn(S.main.master,el.dataset.id);if(!x)return;const t=TODAY(),d=getDay(t,true);const n=Math.max(0,...d.tasks.filter(y=>y.p==='B').map(y=>y.n))+1;d.tasks.push({id:nid(),p:'B',n,t:x.t,s:''});S.main.master=S.main.master.filter(y=>y.id!==x.id);touch('main');touchDay(t);render();toast('오늘 업무(B)로 옮겼어요')},
   valadd:()=>{S.main.values.push({id:nid(),name:'',desc:''});touch('main');render()},
   valdel:el=>{S.main.values=S.main.values.filter(x=>x.id!==el.dataset.id);touch('main');render()},
   goaladd:()=>{S.main.goals.push({id:nid(),t:'',cat:'단기',due:'',done:false});touch('main');render()},
@@ -847,7 +891,7 @@ const ACT={
   gupgrade:(el,e)=>{e&&e.preventDefault();gTok=null;try{localStorage.removeItem('fplanner.gtok')}catch(x){}gConnect()},
   gpushdef:el=>{S.main.gPushDefault=el.checked;touch('main')},
   sendallm:()=>sendAllModal(),
-  sendall:el=>{const cal=$('#sendCal').value;const t=TODAY();let n=0;for(const ym of Object.keys(S.months))for(const [ds,d] of Object.entries(S.months[ym].days||{})){let ch=false;for(const a of (d.appts||[]))if(!a.gpush&&(el.dataset.scope==='all'||ds>=t)){queuePush(ds,a,cal);ch=true;n++}if(ch)touch(dayKey(ds))}closeModal();toast(n+'개 일정을 보내는 중…');gFlush()},
+  sendall:el=>{const cal=$('#sendCal').value;const t=TODAY();let n=0;for(const ym of Object.keys(S.months))for(const [ds,d] of Object.entries(S.months[ym].days||{})){let ch=false;for(const a of (d.appts||[]))if(!a.gpush&&(el.dataset.scope==='all'||ds>=t)){queuePush(ds,a,cal);ch=true;n++}if(ch)touchDay(ds)}closeModal();toast(n+'개 일정을 보내는 중…');gFlush()},
   google:async()=>{const p=new FB.GoogleAuthProvider();try{await FB.signInWithPopup(auth,p);closeModal()}catch(e){if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment','auth/cancelled-popup-request'].includes(e.code)){FB.signInWithRedirect(auth,p)}else if(e.code!=='auth/popup-closed-by-user')aerr(e)}},
   signin:async()=>{try{await FB.signInWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);closeModal()}catch(e){aerr(e)}},
   signup:async()=>{try{await FB.createUserWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);closeModal();toast('가입했어요')}catch(e){aerr(e)}},
@@ -865,9 +909,9 @@ document.addEventListener('change',async e=>{if(e.target.id==='impf'&&e.target.f
 
 /* ---------- bindings (typing) ---------- */
 const BIND={
-  task:el=>{const t=findIn(getDay(ui.date,true).tasks,el.dataset.id);if(t){t.t=el.value;touch(dayKey(ui.date))}},
-  notes:el=>{getDay(ui.date,true).notes=el.value;touch(dayKey(ui.date))},
-  post:el=>{const p=findIn(getDay(ui.date,true).posts,el.dataset.id);if(p){p.text=el.value;touch(dayKey(ui.date))}},
+  task:el=>{const t=findIn(getDay(ui.date,true).tasks,el.dataset.id);if(t){t.t=el.value;touchDay(ui.date)}},
+  notes:el=>{getDay(ui.date,true).notes=el.value;touchDay(ui.date)},
+  post:el=>{const p=findIn(getDay(ui.date,true).posts,el.dataset.id);if(p){p.text=el.value;touchDay(ui.date)}},
   jump:el=>{if(el.value){ui.date=el.value;render()}},
   focus:el=>{const f=findIn(weekObj().focus,el.dataset.id);if(f){f.t=el.value;touch('main')}},
   roles:el=>{weekObj().roles=el.value;touch('main')},
